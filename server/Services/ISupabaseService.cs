@@ -9,7 +9,7 @@ namespace server.Services
 
         Task<MessagesResponse> GetUserMessages(string userId, string? jwt = null);
 
-        Task<MessagesResponse> SaveMessage(CreateMessageRequest request, string jwt);
+        Task<MessagesResponse> SaveMessage(MessageRequest request, string jwt);
 
         Task<MessagesResponse> ClearUserMessages(string userId, string jwt);
     }

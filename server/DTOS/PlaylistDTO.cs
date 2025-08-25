@@ -5,6 +5,22 @@ namespace server.DTOS
         public string AccessToken { get; set; } = string.Empty;
     }
 
+    public class PlaylistRequest
+    {
+        public string? AccessToken { get; set; }
+        public string? PlaylistName { get; set; }
+        public string? PlaylistId { get; set; }
+        public List<SongRecommendation>? Songs { get; set; }
+        public string? Description { get; set; }
+    }
+
+    public class PlaylistResponse
+    {
+        public bool Success { get; set; }
+        public string? Message { get; set; }
+        public List<SongPreview>? Previews {get; set;}
+    }
+
     public class PlaylistSpec
     {
         public string? Name { get; set; }
@@ -20,7 +36,7 @@ namespace server.DTOS
         public string? Market { get; set; }
     }
 
-    // For your OpenAI-generated song recommendations
+    // For OpenAI-generated song recommendations
     public class SongRecommendation
     {
         public string Title { get; set; } = string.Empty;
@@ -50,6 +66,7 @@ namespace server.DTOS
         public string? Message { get; set; }
         public string? PlaylistId { get; set; }
         public string? PlaylistUrl { get; set; }
+        public List<string?>? PlaylistItems { get; set; }
         public int? TracksAdded { get; set; }
     }
 }

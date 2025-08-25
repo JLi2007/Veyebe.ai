@@ -112,7 +112,7 @@ namespace server.Services
             }
         }
 
-        public async Task<MessagesResponse> SaveMessage(CreateMessageRequest request, string jwt)
+        public async Task<MessagesResponse> SaveMessage(MessageRequest request, string jwt)
         {
             try
             {
@@ -166,7 +166,7 @@ namespace server.Services
                     .Delete();
 
                 // Add the starting message back
-                var startingMessage = new CreateMessageRequest
+                var startingMessage = new MessageRequest
                 {
                     UserId = userId,
                     Text = "",

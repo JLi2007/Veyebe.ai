@@ -9,9 +9,9 @@ namespace server.Services
 {
     public class SpotifyService : ISpotifyService
     {
-        public Task<SpotifyClient> GetClientAsync(string AccessToken)
+        public Task<SpotifyClient> GetClientAsync(string accessToken)
         {
-            var spotify = new SpotifyClient(AccessToken);
+            var spotify = new SpotifyClient(accessToken);
             return Task.FromResult(spotify);
         }
 
@@ -26,46 +26,36 @@ namespace server.Services
             return await spotify.UserProfile.Current();
         }
 
-        // 1. Create New Playlist - Enhanced version of your existing method
-        public async Task<string?> CreatePlaylistFromSpecAsync(string accessToken, string userId, PlaylistSpec spec)
+        // Get User Playlists
+        public async Task<SpotifyActionResponse> GetUserPlaylistsAsync(string accessToken)
         {
             var spotify = await GetClientAsync(accessToken);
 
-            // Create playlist
-            var createRequest = new PlaylistCreateRequest(spec.Name ?? "New Playlist")
+            try
             {
-                Public = false,
-                Description = spec.Description ?? "Generated playlist"
-            };
-            var created = await spotify.Playlists.Create(userId, createRequest);
-            if (created == null) return null;
+                var playlists = await spotify.Playlists.CurrentUsers();
 
-            var playlistId = created.Id;
-            if (playlistId == null) return null;
-
-            // Get track URIs from your OpenAI-generated JSON
-            var uris = await GetRecommendedTrackUrisAsync(accessToken, spec);
-
-            // Add tracks if any were found
-            if (uris != null && uris.Count > 0)
-            {
-                // Spotify allows max 100 tracks per request
-                var batches = uris.Select((uri, index) => new { uri, index })
-                                 .GroupBy(x => x.index / 100)
-                                 .Select(g => g.Select(x => x.uri).ToList());
-
-                foreach (var batch in batches)
+                return new SpotifyActionResponse
                 {
-                    var addRequest = new PlaylistAddItemsRequest(batch);
-                    await spotify.Playlists.AddItems(playlistId, addRequest);
-                }
+                    Success = true,
+                    Message = "Playlists retrieved successfully",
+                    PlaylistItems = (playlists.Items ?? new List<FullPlaylist>())
+                        .Select(p => p.Id)
+                        .ToList()
+                };
             }
-
-            return created.Uri ?? created.Id;
+            catch (Exception ex)
+            {
+                return new SpotifyActionResponse
+                {
+                    Success = false,
+                    Message = ex.Message
+                };
+            }
         }
 
         // 2. Create playlist from OpenAI JSON song list
-        public async Task<string?> CreatePlaylistFromSongListAsync(string accessToken, string userId, string playlistName, List<SongRecommendation> songs, string? description = null)
+        public async Task<SpotifyActionResponse> CreatePlaylistFromSongListAsync(string accessToken, string userId, string playlistName, List<SongRecommendation> songs, string? description = null)
         {
             var spotify = await GetClientAsync(accessToken);
 
@@ -76,10 +66,18 @@ namespace server.Services
                 Description = description ?? "AI-generated playlist"
             };
             var created = await spotify.Playlists.Create(userId, createRequest);
-            if (created == null) return null;
+            if (created == null) return new SpotifyActionResponse
+            {
+                Success = false,
+                Message = "playlist not created"
+            };
 
             var playlistId = created.Id;
-            if (playlistId == null) return null;
+            if (playlistId == null) return new SpotifyActionResponse
+            {
+                Success = false,
+                Message = "playlist id is missing"
+            };
 
             // Search for each song and get Spotify URIs
             var uris = new List<string>();
@@ -87,7 +85,7 @@ namespace server.Services
             {
                 var searchQuery = $"track:\"{song.Title}\" artist:\"{song.Artist}\"";
                 var searchRequest = new SearchRequest(SearchRequest.Types.Track, searchQuery) { Limit = 1 };
-                
+
                 try
                 {
                     var searchResult = await spotify.Search.Item(searchRequest);
@@ -104,6 +102,11 @@ namespace server.Services
                 {
                     // Log error but continue with other songs
                     Console.WriteLine($"Error searching for {song.Artist} - {song.Title}: {ex.Message}");
+                    return new SpotifyActionResponse
+                    {
+                        Success = false,
+                        Message = ex.Message
+                    };
                 }
             }
 
@@ -121,7 +124,11 @@ namespace server.Services
                 }
             }
 
-            return created.ExternalUrls?["spotify"] ?? created.Uri ?? created.Id;
+            return new SpotifyActionResponse
+            {
+                Success = false,
+                Message = created.ExternalUrls?["spotify"] ?? created.Uri ?? created.Id
+            };
         }
 
         // 3. Add songs to existing playlist
@@ -135,7 +142,7 @@ namespace server.Services
             {
                 var searchQuery = $"track:\"{song.Title}\" artist:\"{song.Artist}\"";
                 var searchRequest = new SearchRequest(SearchRequest.Types.Track, searchQuery) { Limit = 1 };
-                
+
                 try
                 {
                     var searchResult = await spotify.Search.Item(searchRequest);
@@ -191,7 +198,7 @@ namespace server.Services
             {
                 var searchQuery = $"track:\"{song.Title}\" artist:\"{song.Artist}\"";
                 var searchRequest = new SearchRequest(SearchRequest.Types.Track, searchQuery) { Limit = 1 };
-                
+
                 try
                 {
                     var searchResult = await spotify.Search.Item(searchRequest);
@@ -244,7 +251,7 @@ namespace server.Services
             {
                 var searchQuery = $"track:\"{song.Title}\" artist:\"{song.Artist}\"";
                 var searchRequest = new SearchRequest(SearchRequest.Types.Track, searchQuery) { Limit = 1 };
-                
+
                 try
                 {
                     var searchResult = await spotify.Search.Item(searchRequest);
@@ -270,6 +277,56 @@ namespace server.Services
             }
 
             return previews;
+        }
+
+        // 1. Create New Playlist From Spec — experimental feature...
+        public async Task<SpotifyActionResponse> CreatePlaylistFromSpecAsync(string accessToken, string userId, PlaylistSpec spec)
+        {
+            var spotify = await GetClientAsync(accessToken);
+
+            // Create playlist
+            var createRequest = new PlaylistCreateRequest(spec.Name ?? "New Playlist")
+            {
+                Public = false,
+                Description = spec.Description ?? "Generated playlist"
+            };
+            var created = await spotify.Playlists.Create(userId, createRequest);
+            if (created == null) return new SpotifyActionResponse
+            {
+                Success = false,
+                Message = "playlist not created"
+            };
+
+            var playlistId = created.Id;
+            if (playlistId == null) return new SpotifyActionResponse
+            {
+                Success = false,
+                Message = "playlist id is missing"
+            };
+
+            // Get track URIs from your OpenAI-generated JSON
+            var uris = await GetRecommendedTrackUrisAsync(accessToken, spec);
+
+            // Add tracks if any were found
+            if (uris != null && uris.Count > 0)
+            {
+                // Spotify allows max 100 tracks per request
+                var batches = uris.Select((uri, index) => new { uri, index })
+                                 .GroupBy(x => x.index / 100)
+                                 .Select(g => g.Select(x => x.uri).ToList());
+
+                foreach (var batch in batches)
+                {
+                    var addRequest = new PlaylistAddItemsRequest(batch);
+                    await spotify.Playlists.AddItems(playlistId, addRequest);
+                }
+            }
+
+            return new SpotifyActionResponse
+            {
+                Success = false,
+                Message = created.Uri ?? created.Id
+            };
         }
 
         // Get Recommended Tracks
@@ -318,12 +375,6 @@ namespace server.Services
 
             return uris;
         }
-
-        // Get User Playlists
-        public async Task<Paging<FullPlaylist>> GetUserPlaylistsAsync(string accessToken)
-        {
-            var spotify = await GetClientAsync(accessToken);
-            return await spotify.Playlists.CurrentUsers();
-        }
+        
     }
 }

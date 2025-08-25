@@ -1,4 +1,3 @@
-// placeholder
 export const CreateNewPlaylist = async() => {
 
 }

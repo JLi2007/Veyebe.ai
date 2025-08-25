@@ -56,7 +56,7 @@ public class SupabaseController : ControllerBase
 
     // POST: api/supabase/save-message
     [HttpPost("save-message")]
-    public async Task<ActionResult<MessagesResponse>> SaveMessage([FromBody] CreateMessageRequest request)
+    public async Task<ActionResult<MessagesResponse>> SaveMessage([FromBody] MessageRequest request)
     {
         Console.WriteLine("Saving Messages for: "+ request.UserId);
         try
