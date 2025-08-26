@@ -46,7 +46,6 @@ const App = () => {
     "a playlist for a scenic drive in the alps"
   );
   const [copiedIndex, setCopiedIndex] = useState(null);
-
   const [showSpotifyPage, setShowSpotifyPage] = useState<boolean>(true);
   const [shouldRenderSpotifyPage, setShouldRenderSpotifyPage] = useState(showSpotifyPage);
   const [showSpotifyFunctions, setShowSpotifyFunctions] = useState<boolean>(false);
@@ -161,16 +160,15 @@ const App = () => {
 
   // remove # from url (supabase auth auto appends) and announce page state
   useEffect(() => {
+    let isFetching = false;
+
     history.pushState(
       "",
       document.title,
       window.location.pathname + window.location.search
     );
 
-    if (
-      sessionStorage.getItem("redirectedAfterLogin") == "true" ||
-      user // Use user instead of user
-    ) {
+    if (sessionStorage.getItem("redirectedAfterLogin") == "true" || user) {
       setShowAlert(true);
     }
 
@@ -186,39 +184,21 @@ const App = () => {
     };
 
     const fetchSession = async () => {
-      // Only fetch if user exists
-      if (!user) {
-        setUsername("");
-        setPfp("/404profile.png");
-        setNeedsSpotifyReauth(false);
-        return;
-      }
+      if (isFetching) return;
+      isFetching = true;
 
       try {
+        if (!user) {
+          setUsername("");
+          setPfp("/404profile.png");
+          setNeedsSpotifyReauth(false);
+          return;
+        }
+
         const session = await supabase.auth.getSession();
         console.log("INITIAL SESSION", session);
 
-        let currentSession = session.data.session;
-
-        // If we have a session but no provider_token, try to refresh
-        if (currentSession && !currentSession.provider_token) {
-          console.log(
-            "No provider token found, attempting to refresh session..."
-          );
-
-          const { data: refreshData, error: refreshError } =
-            await supabase.auth.refreshSession();
-
-          if (refreshError) {
-            console.error("Error refreshing session:", refreshError);
-            handleMissingSpotifyToken();
-            return;
-          }
-
-          // Use the refreshed session
-          currentSession = refreshData.session;
-          console.log("REFRESHED SESSION", currentSession);
-        }
+        const currentSession = session.data.session;
 
         // Now check for provider token
         if (currentSession?.provider_token) {
@@ -233,10 +213,10 @@ const App = () => {
               {
                 method: "POST",
                 headers: {
+                  Authorization: `Bearer ${accessToken}`,
                   "Content-Type": "application/json",
                   Accept: "application/json",
                 },
-                body: JSON.stringify({ accessToken }),
               }
             );
 
@@ -272,18 +252,24 @@ const App = () => {
             );
             handleMissingSpotifyToken();
           }
+        } else if (currentSession && !currentSession.provider_token) {
+          // We have a session but no provider token - set reauth flag but don't auto-refresh
+          console.log("No provider token found - user needs to reconnect");
+          handleMissingSpotifyToken();
         } else {
-          // Still no provider token after refresh
-          console.warn("No provider token available after refresh");
+          // No session at all
+          console.warn("No active session");
           handleMissingSpotifyToken();
         }
       } catch (error) {
         console.error("Error in fetchSession:", error);
         handleMissingSpotifyToken();
+      } finally {
+        isFetching = false;
       }
     };
     fetchSession();
-  }, [user, supabase]);
+  }, [user, supabase.auth]);
 
   async function signInWithSpotify() {
     const { data, error } = await signInWithOAuth({
@@ -321,7 +307,6 @@ const App = () => {
   // Add a function to handle Spotify re-authentication
   const handleSpotifyReauth = async () => {
     try {
-      // First, try to sign out and sign back in with Spotify
       const { error } = await signInWithOAuth({
         provider: "spotify",
         options: {

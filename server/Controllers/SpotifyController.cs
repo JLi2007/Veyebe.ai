@@ -2,7 +2,6 @@
 using Microsoft.AspNetCore.Mvc;
 using server.Services;
 using server.DTOS;
-using server.DTOs;
 
 [ApiController]
 [Route("api/[controller]")]
@@ -15,19 +14,24 @@ public class SpotifyController : ControllerBase
         _spotifyService = SpotifyService;
     }
 
-    // POST: get user spotify profile
-    [HttpPost("profile")]
-    public async Task<IActionResult> GetProfile([FromBody] TokenDTo body) // request (JSON) --> TokenDTO object with [FromBody]
+    private string? GetAccessTokenFromRequest()
     {
-        var config = await _spotifyService.GetCurrentUserProfileAsync(body.AccessToken);
-        return Ok(config);
+        var authHeader = Request.Headers["Authorization"].FirstOrDefault();
+        if (authHeader != null && authHeader.StartsWith("Bearer "))
+        {
+            return authHeader.Substring("Bearer ".Length).Trim();
+        }
+        return null;
     }
 
-    [HttpPost("get-playlist")]
-    public async Task<ActionResult<PlaylistResponse>> GetPlaylists([FromBody] PlaylistRequest request)
+    // POST: get user spotify profile
+    [HttpPost("profile")]
+    public async Task<ActionResult<PlaylistResponse>> GetProfile() // request (JSON) --> TokenDTO object with [FromBody]
     {
-        Console.WriteLine("Getting playlists");
-        if (string.IsNullOrEmpty(request.AccessToken))
+        Console.WriteLine("Getting profile");
+        var accessToken = GetAccessTokenFromRequest();
+
+        if (string.IsNullOrEmpty(accessToken))
         {
             return BadRequest(new PlaylistResponse
             {
@@ -36,7 +40,26 @@ public class SpotifyController : ControllerBase
             });
         }
 
-        var action = await _spotifyService.GetUserPlaylistsAsync(request.AccessToken);
+        var config = await _spotifyService.GetCurrentUserProfileAsync(accessToken);
+        return Ok(config);
+    }
+
+    [HttpPost("get-playlist")]
+    public async Task<ActionResult<PlaylistResponse>> GetPlaylists()
+    {
+        Console.WriteLine("Getting playlists");
+        var accessToken = GetAccessTokenFromRequest();
+
+        if (string.IsNullOrEmpty(accessToken))
+        {
+            return BadRequest(new PlaylistResponse
+            {
+                Success = false,
+                Message = "Access Token is Required"
+            });
+        }
+
+        var action = await _spotifyService.GetUserPlaylistsAsync(accessToken);
 
         if (!action.Success)
         {
@@ -49,7 +72,20 @@ public class SpotifyController : ControllerBase
     [HttpPost("create-playlist/{userId}")]
     public async Task<ActionResult<string?>> CreatePlaylist(string userId, [FromBody] PlaylistRequest request)
     {
-        var action = await _spotifyService.CreatePlaylistFromSongListAsync(userId, request.AccessToken!, request.PlaylistName!, request.Songs!, request.Description);
+        Console.WriteLine("Creating Playlists for: " + userId);
+        var accessToken = GetAccessTokenFromRequest();
+
+        if (string.IsNullOrEmpty(accessToken))
+        {
+            return BadRequest(new PlaylistResponse
+            {
+                Success = false,
+                Message = "Access Token is required"
+            });
+        }
+
+
+        var action = await _spotifyService.CreatePlaylistFromSongListAsync(userId, accessToken!, request.PlaylistName!, request.Songs!, request.Description);
 
         if (!action.Success)
         {
@@ -63,7 +99,10 @@ public class SpotifyController : ControllerBase
     [HttpPost("add-songs-to-playlist")]
     public async Task<ActionResult<PlaylistResponse>> AddSongsToPlaylist([FromBody] PlaylistRequest request)
     {
-        if (string.IsNullOrEmpty(request.AccessToken))
+        Console.WriteLine("Adding Songs to Current Users Playlist");
+        var accessToken = GetAccessTokenFromRequest();
+        
+        if (string.IsNullOrEmpty(accessToken))
         {
             return BadRequest(new PlaylistResponse
             {
@@ -90,7 +129,7 @@ public class SpotifyController : ControllerBase
             });
         }
 
-        var success = await _spotifyService.AddSongsToPlaylistAsync(request.AccessToken, request.PlaylistId, request.Songs);
+        var success = await _spotifyService.AddSongsToPlaylistAsync(accessToken, request.PlaylistId, request.Songs);
 
         if (!success)
         {
@@ -112,7 +151,10 @@ public class SpotifyController : ControllerBase
     [HttpPost("save-to-liked-songs")]
     public async Task<ActionResult<PlaylistResponse>> SaveSongsToLikedSongs([FromBody] PlaylistRequest request)
     {
-        if (string.IsNullOrEmpty(request.AccessToken))
+        Console.WriteLine("Saving songs to liked songs");
+        var accessToken = GetAccessTokenFromRequest();
+
+        if (string.IsNullOrEmpty(accessToken))
         {
             return BadRequest(new PlaylistResponse
             {
@@ -121,7 +163,7 @@ public class SpotifyController : ControllerBase
             });
         }
 
-        if (request.Songs == null || !request.Songs.Any())
+        if (request.Songs == null || request.Songs.Count > 0)
         {
             return BadRequest(new PlaylistResponse
             {
@@ -130,7 +172,7 @@ public class SpotifyController : ControllerBase
             });
         }
 
-        var success = await _spotifyService.SaveSongsToLikedSongsAsync(request.AccessToken, request.Songs);
+        var success = await _spotifyService.SaveSongsToLikedSongsAsync(accessToken, request.Songs);
 
         if (!success)
         {
@@ -152,7 +194,10 @@ public class SpotifyController : ControllerBase
     [HttpPost("song-previews")]
     public async Task<ActionResult<PlaylistResponse>> GetSongPreviews([FromBody] PlaylistRequest request)
     {
-        if (string.IsNullOrEmpty(request.AccessToken))
+        Console.WriteLine("Getting Song Previews");
+        var accessToken = GetAccessTokenFromRequest();
+
+        if (string.IsNullOrEmpty(accessToken))
         {
             return BadRequest(new PlaylistResponse
             {
@@ -174,13 +219,13 @@ public class SpotifyController : ControllerBase
 
         try
         {
-            var previews = await _spotifyService.GetSongPreviewsAsync(request.AccessToken, request.Songs);
+            var previews = await _spotifyService.GetSongPreviewsAsync(accessToken, request.Songs);
 
             return Ok(new PlaylistResponse
             {
                 Success = true,
+                Message = "Song previews retrieved successfully",
                 Previews = previews,
-                Message = "Song previews retrieved successfully"
             });
         }
         catch (Exception ex)
