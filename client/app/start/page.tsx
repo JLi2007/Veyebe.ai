@@ -488,7 +488,7 @@ const App = () => {
                     animate={{ x: 0 }}
                     exit={{ x: "-100%" }}
                     transition={{ duration: 0.4 }}
-                    className="absolute w-full h-full bg-stone-900 flex justify-start border-r"
+                    className="absolute w-full h-full bg-stone-900 flex justify-start"
                   >
                     <div className="w-full h-full flex flex-col">
                       <ArrowLeftFromLine
@@ -723,7 +723,7 @@ const App = () => {
             </AnimatePresence>
           )}
 
-          <div className="relative w-full h-full border-b">
+          <div className="relative w-full h-full">
             <TopNav
               user={user}
               pfp={pfp}
