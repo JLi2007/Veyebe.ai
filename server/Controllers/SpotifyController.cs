@@ -28,8 +28,8 @@ public class SpotifyController : ControllerBase
     [HttpPost("profile")]
     public async Task<ActionResult<PlaylistResponse>> GetProfile() // request (JSON) --> TokenDTO object with [FromBody]
     {
-        Console.WriteLine("Getting profile");
         var accessToken = GetAccessTokenFromRequest();
+        Console.WriteLine("Getting profile for " + accessToken);
 
         if (string.IsNullOrEmpty(accessToken))
         {
@@ -47,8 +47,8 @@ public class SpotifyController : ControllerBase
     [HttpPost("get-playlist")]
     public async Task<ActionResult<PlaylistResponse>> GetPlaylists()
     {
-        Console.WriteLine("Getting playlists");
         var accessToken = GetAccessTokenFromRequest();
+        Console.WriteLine("Getting playlists for: " + accessToken);
 
         if (string.IsNullOrEmpty(accessToken))
         {
@@ -72,8 +72,8 @@ public class SpotifyController : ControllerBase
     [HttpPost("create-playlist/{userId}")]
     public async Task<ActionResult<string?>> CreatePlaylist(string userId, [FromBody] PlaylistRequest request)
     {
-        Console.WriteLine("Creating Playlists for: " + userId);
         var accessToken = GetAccessTokenFromRequest();
+        Console.WriteLine("Creating playlists for: " + accessToken);
 
         if (string.IsNullOrEmpty(accessToken))
         {
@@ -99,8 +99,8 @@ public class SpotifyController : ControllerBase
     [HttpPost("add-songs-to-playlist")]
     public async Task<ActionResult<PlaylistResponse>> AddSongsToPlaylist([FromBody] PlaylistRequest request)
     {
-        Console.WriteLine("Adding Songs to Current Users Playlist");
         var accessToken = GetAccessTokenFromRequest();
+        Console.WriteLine("ADding songs to playlist for: " + accessToken);
         
         if (string.IsNullOrEmpty(accessToken))
         {
@@ -151,8 +151,8 @@ public class SpotifyController : ControllerBase
     [HttpPost("save-to-liked-songs")]
     public async Task<ActionResult<PlaylistResponse>> SaveSongsToLikedSongs([FromBody] PlaylistRequest request)
     {
-        Console.WriteLine("Saving songs to liked songs");
         var accessToken = GetAccessTokenFromRequest();
+        Console.WriteLine("Saving songs to liked songs for: " + accessToken);
 
         if (string.IsNullOrEmpty(accessToken))
         {
@@ -194,8 +194,8 @@ public class SpotifyController : ControllerBase
     [HttpPost("song-previews")]
     public async Task<ActionResult<PlaylistResponse>> GetSongPreviews([FromBody] PlaylistRequest request)
     {
-        Console.WriteLine("Getting Song Previews");
         var accessToken = GetAccessTokenFromRequest();
+        Console.WriteLine("Getting song previews for: " + accessToken);
 
         if (string.IsNullOrEmpty(accessToken))
         {

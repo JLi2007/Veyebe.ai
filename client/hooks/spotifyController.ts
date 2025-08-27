@@ -16,8 +16,12 @@ export const GetUserPlaylists = async (accessToken: string) => {
       const contentType = res.headers.get("content-type");
       if (contentType && contentType.includes("application/json")) {
         const data = await res.json();
-        console.log(data);
-        return { success: true, playlists: data.playlists || data };
+        console.log("Raw API response:", data);
+        // Return the actual playlists from playlistItems
+        return {
+          success: true,
+          playlists: data.playlistItems || data.playlists || [],
+        };
       }
       return { success: false, error: "Response is not JSON" };
     }

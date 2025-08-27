@@ -1,14 +1,19 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useAuth } from "@/context/AuthContext";
+import {
+  GetUserPlaylists,
+  CreateNewPlaylist,
+  AddToExistingPlaylist,
+} from "@/hooks/spotifyController";
 import useChatbot, { MessageDTO, MessagesResponse } from "@/hooks/useChatbot";
 import useChatScroll from "@/hooks/chatbotAutoscroll";
-import AlertFlash from "@/components/alert";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+import { WelcomeScreen } from "@/components/WelcomeScreen";
+import { TopNav } from "@/components/TopNav";
+import { ChatMessage } from "@/components/ChatMessage";
+import { SpotifyReauthNotification } from "@/components/SpotifyReauth";
+import { CreatePlaylistModal } from "@/components/CreatePlaylistModal";
+import AlertFlash from "@/components/Alert";
 import {
   Select,
   SelectContent,
@@ -25,11 +30,7 @@ import {
   ArrowRightFromLine,
   MessageCircleQuestion,
   SendHorizontal,
-  Copy,
-  Check,
   RotateCcw,
-  Sparkles,
-  LogIn,
 } from "lucide-react";
 
 const App = () => {
@@ -51,6 +52,124 @@ const App = () => {
   const [showSpotifyFunctions, setShowSpotifyFunctions] = useState<boolean>(false);
   const [needsSpotifyReauth, setNeedsSpotifyReauth] = useState<boolean>(false);
   const { supabase, signInWithOAuth, user, signOut } = useAuth();
+
+  const [userPlaylists, setUserPlaylists] = useState<any[]>([]);
+  const [showCreatePlaylistModal, setShowCreatePlaylistModal] = useState(false);
+  const [isCreatingPlaylist, setIsCreatingPlaylist] = useState(false);
+  const [newPlaylistName, setNewPlaylistName] = useState("");
+  const [newPlaylistDescription, setNewPlaylistDescription] = useState("");
+
+  const fetchUserPlaylists = useCallback(async () => {
+    if (!user) return;
+
+    try {
+      const session = await supabase.auth.getSession();
+      const providerToken = session.data.session?.provider_token;
+
+      console.log("Session data:", session.data.session);
+
+      if (providerToken) {
+        const result = await GetUserPlaylists(providerToken);
+        console.log("Full result:", result);
+
+        if (result && result.success) {
+          console.log("Playlists data:", result.playlists);
+          // Ensure we're setting an array
+          const playlistsArray = Array.isArray(result.playlists)
+            ? result.playlists
+            : [];
+          setUserPlaylists(playlistsArray);
+        } else {
+          console.log("Failed to fetch playlists or no playlists found");
+          setUserPlaylists([]);
+        }
+      } else {
+        console.log("No provider token found - triggering reauth");
+        setNeedsSpotifyReauth(true);
+      }
+    } catch (error) {
+      console.error("Error fetching playlists:", error);
+      setUserPlaylists([]);
+    }
+  }, [supabase.auth, user]);
+
+  useEffect(() => {
+    if (user && showSpotifyFunctions) {
+      fetchUserPlaylists();
+    }
+  }, [user, showSpotifyFunctions, fetchUserPlaylists]);
+
+  const handleCreateNewPlaylist = async () => {
+    if (!user || !newPlaylistName.trim()) return;
+
+    setIsCreatingPlaylist(true);
+    try {
+      const session = await supabase.auth.getSession();
+      const accessToken = session.data.session?.provider_token;
+
+      if (accessToken) {
+        // Extract song IDs from messages or use selectedSongs
+        const songIds = extractSongIdsFromMessages();
+
+        await CreateNewPlaylist(
+          user.id,
+          accessToken,
+          newPlaylistName,
+          songIds,
+          newPlaylistDescription
+        );
+
+        setShowCreatePlaylistModal(false);
+        setNewPlaylistName("");
+        setNewPlaylistDescription("");
+        // Show success message
+      }
+    } catch (error) {
+      console.error("Error creating playlist:", error);
+    } finally {
+      setIsCreatingPlaylist(false);
+    }
+  };
+
+  const extractSongIdsFromMessages = (): string[] => {
+    // This is a placeholder - you'll need to implement based on how song IDs are stored in messages
+    const botMessages = messages.filter((msg) => msg.sender === "bot");
+    const songIds: string[] = [];
+
+    // Example implementation - adjust based on your actual message format
+    botMessages.forEach((msg) => {
+      // Look for Spotify track IDs in the message text
+      const spotifyIdRegex = /spotify:track:([a-zA-Z0-9]{22})/g;
+      const matches = msg.text.match(spotifyIdRegex);
+      if (matches) {
+        matches.forEach((match) => {
+          const trackId = match.replace("spotify:track:", "");
+          if (!songIds.includes(trackId)) {
+            songIds.push(trackId);
+          }
+        });
+      }
+    });
+
+    return songIds;
+  };
+
+  const handleAddToExistingPlaylist = async (playlistId: string) => {
+    if (!user) return;
+
+    try {
+      const session = await supabase.auth.getSession();
+      const accessToken = session.data.session?.provider_token;
+
+      if (accessToken) {
+        const songIds = extractSongIdsFromMessages();
+        await AddToExistingPlaylist(accessToken, playlistId, songIds);
+        // Show success message
+      }
+    } catch (error) {
+      console.error("Error adding to playlist:", error);
+    }
+  };
 
   useEffect(() => {
     // Load messages when user changes
@@ -286,24 +405,6 @@ const App = () => {
     sessionStorage.setItem("redirectedAfterLogin", "true");
   }
 
-  const parseBoldText = (text: string) => {
-    // split text by **bold** patterns and map to JSX
-    const parts = text.split(/(\*\*.*?\*\*)/g);
-
-    return parts.map((part, index) => {
-      if (part.startsWith("**") && part.endsWith("**")) {
-        // remove the ** and make it bold
-        const boldText = part.slice(2, -2);
-        return (
-          <strong key={index} className="font-bold">
-            {boldText}
-          </strong>
-        );
-      }
-      return part;
-    });
-  };
-
   // Add a function to handle Spotify re-authentication
   const handleSpotifyReauth = async () => {
     try {
@@ -395,517 +496,405 @@ const App = () => {
     );
   };
 
-  const SpotifyReauthNotification = () => {
-    if (!needsSpotifyReauth || !user) return null;
-
-    return (
-      <motion.div
-        initial={{ opacity: 0, y: -20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="absolute top-16 left-1/2 transform -translate-x-1/2 z-40 bg-amber-600/20 backdrop-blur-md border border-amber-500/30 rounded-lg p-3 mx-4"
-      >
-        <div className="flex items-center gap-3 text-amber-200">
-          <div className="w-2 h-2 bg-amber-400 rounded-full animate-pulse"></div>
-          <span className="text-sm">Spotify connection expired</span>
-          <Button
-            onClick={handleSpotifyReauth}
-            className="bg-amber-600/30 hover:bg-amber-600/50 border border-amber-500/50 text-amber-200 text-xs px-3 py-1 h-auto"
-          >
-            Reconnect
-          </Button>
-        </div>
-      </motion.div>
-    );
-  };
-
   return (
-    <div className="relative w-screen md:h-screen h-auto min-h-screen bg-stone-800">
-      <div className="flex justify-center flex-row w-full h-full">
-        {shouldRenderSpotifyPage && (
-          <div className="w-[25%] relative h-full overflow-hidden">
-            <AnimatePresence
-              onExitComplete={() => setShouldRenderSpotifyPage(false)} // unmounts AFTER exit animation (avoids unmounting DURING)
-            >
-              {showSpotifyPage && ( // condition as the motion.div must become removed/hidden for onexitcomplete to complete
-                <motion.div
-                  key="sidebar"
-                  initial={{ x: "-100%" }}
-                  animate={{ x: 0 }}
-                  exit={{ x: "-100%" }}
-                  transition={{ duration: 0.4 }}
-                  className="absolute w-full h-full bg-stone-900 flex justify-start border-r"
-                >
-                  <div className="w-full h-full flex flex-col">
-                    <ArrowLeftFromLine
-                      className="absolute text-stone-100/60 right-1 top-2 cursor-pointer z-10"
-                      onClick={() => setShowSpotifyPage(false)}
-                    />
+    <>
+      <div className="relative w-screen md:h-screen h-auto min-h-screen bg-stone-800">
+        <div className="flex justify-center flex-row w-full h-full">
+          {shouldRenderSpotifyPage && (
+            <div className="w-[25%] relative h-full overflow-hidden">
+              <AnimatePresence
+                onExitComplete={() => setShouldRenderSpotifyPage(false)} // unmounts AFTER exit animation (avoids unmounting DURING)
+              >
+                {showSpotifyPage && ( // condition as the motion.div must become removed/hidden for onexitcomplete to complete
+                  <motion.div
+                    key="sidebar"
+                    initial={{ x: "-100%" }}
+                    animate={{ x: 0 }}
+                    exit={{ x: "-100%" }}
+                    transition={{ duration: 0.4 }}
+                    className="absolute w-full h-full bg-stone-900 flex justify-start border-r"
+                  >
+                    <div className="w-full h-full flex flex-col">
+                      <ArrowLeftFromLine
+                        className="absolute text-stone-100/60 right-1 top-2 cursor-pointer z-10"
+                        onClick={() => setShowSpotifyPage(false)}
+                      />
 
-                    <div className="p-4">
-                      <h1 className="text-stone-100 text-sm font-medium mb-4">
-                        {user ? (
-                          <div className="flex items-center gap-2">
-                            <span>{`Spotify Functions - ${username}`}</span>
-                            {needsSpotifyReauth && (
-                              <div
-                                className="w-2 h-2 bg-amber-400 rounded-full animate-pulse"
-                                title="Spotify needs reconnection"
-                              />
-                            )}
-                          </div>
-                        ) : (
-                          "Sign in with Spotify first"
-                        )}
-                      </h1>
+                      <div className="p-4">
+                        <h1 className="text-stone-100 text-sm font-medium mb-4">
+                          {user ? (
+                            <div className="flex items-center gap-2">
+                              <span>{`Spotify Functions - ${username}`}</span>
+                              {needsSpotifyReauth && (
+                                <div
+                                  className="w-2 h-2 bg-amber-400 rounded-full animate-pulse"
+                                  title="Spotify needs reconnection"
+                                />
+                              )}
+                            </div>
+                          ) : (
+                            "Sign in with Spotify first"
+                          )}
+                        </h1>
 
-                      {showSpotifyFunctions && user && (
-                        <div className="space-y-4">
-                          <div className="flex items-center justify-between mb-4">
-                            <h2 className="text-stone-300 text-sm font-medium tracking-wide">
-                              Spotify Actions
-                            </h2>
-                            <Button
-                              onClick={clearMessages}
-                              className="bg-slate-600/20 hover:bg-slate-600/40 border border-slate-500/30 text-slate-300 text-xs px-3 py-1.5 h-auto flex items-center gap-1"
-                              title="Start a new request"
-                            >
-                              <RotateCcw className="w-3 h-3" />
-                              New Request
-                            </Button>
-                          </div>
-
-                          <div className="space-y-3">
-                            {/* Create New Playlist */}
-                            <div className="relative group">
-                              <div className="absolute inset-0 bg-gradient-to-br from-green-500/10 to-green-600/5 rounded-lg blur-sm opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                        {showSpotifyFunctions && user && (
+                          <div className="space-y-4">
+                            <div className="flex items-center justify-between mb-4">
+                              <h2 className="text-stone-300 text-sm font-medium tracking-wide">
+                                Spotify Actions
+                              </h2>
                               <Button
-                                className="relative w-full text-left justify-start bg-green-600/15 hover:bg-green-600/25 border border-green-500/30 text-green-200 text-sm h-auto py-4 px-4 rounded-lg backdrop-blur-sm overflow-hidden"
-                                onClick={() => {
-                                  console.log("Create new playlist clicked");
-                                }}
+                                onClick={clearMessages}
+                                className="bg-slate-600/20 hover:bg-slate-600/40 border border-slate-500/30 text-slate-300 text-xs px-3 py-1.5 h-auto flex items-center gap-1"
+                                title="Start a new request"
                               >
-                                {/* Background decoration */}
-                                <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-bl from-green-400/10 to-transparent rounded-full -translate-y-4 translate-x-4"></div>
-                                <div className="absolute bottom-0 left-0 w-12 h-12 bg-gradient-to-tr from-green-500/10 to-transparent rounded-full translate-y-2 -translate-x-2"></div>
-
-                                {/* Spotify icon placeholder */}
-                                <div className="absolute top-2 right-2 w-6 h-6 bg-green-400/20 rounded-full flex items-center justify-center">
-                                  <div className="w-3 h-3 bg-green-400/40 rounded-full"></div>
-                                </div>
-
-                                <div className="flex flex-col items-start relative z-10">
-                                  <span className="font-semibold text-green-100">
-                                    Create New Playlist
-                                  </span>
-                                  <span className="text-xs text-green-300/80 mt-0.5">
-                                    Generate a fresh playlist with all
-                                    suggestions
-                                  </span>
-                                </div>
+                                <RotateCcw className="w-3 h-3" />
+                                New Request
                               </Button>
                             </div>
 
-                            {/* Add to Existing Playlist */}
-                            <div className="relative group">
-                              <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 to-blue-600/5 rounded-lg blur-sm opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-                              <div className="relative w-full bg-blue-600/15 hover:bg-blue-600/25 border border-blue-500/30 rounded-lg backdrop-blur-sm overflow-hidden p-4">
-                                {/* Background decoration */}
-                                <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-bl from-blue-400/10 to-transparent rounded-full -translate-y-4 translate-x-4"></div>
-                                <div className="absolute bottom-0 left-0 w-12 h-12 bg-gradient-to-tr from-blue-500/10 to-transparent rounded-full translate-y-2 -translate-x-2"></div>
+                            <div className="space-y-3">
+                              {/* Create New Playlist */}
+                              <div className="relative group">
+                                <div className="absolute inset-0 bg-gradient-to-br from-green-500/10 to-green-600/5 rounded-lg blur-sm opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                                <Button
+                                  className="relative w-full text-left justify-start bg-green-600/15 hover:bg-green-600/25 border border-green-500/30 text-green-200 text-sm h-auto py-4 px-4 rounded-lg backdrop-blur-sm overflow-hidden"
+                                  onClick={() =>
+                                    setShowCreatePlaylistModal(true)
+                                  }
+                                >
+                                  {/* Background decoration */}
+                                  <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-bl from-green-400/10 to-transparent rounded-full -translate-y-4 translate-x-4"></div>
+                                  <div className="absolute bottom-0 left-0 w-12 h-12 bg-gradient-to-tr from-green-500/10 to-transparent rounded-full translate-y-2 -translate-x-2"></div>
 
-                                {/* Playlist icon placeholder */}
-                                <div className="absolute top-2 right-2 w-6 h-6 bg-blue-400/20 rounded-full flex items-center justify-center">
-                                  <div className="w-2 h-2 bg-blue-400/40 rounded-sm"></div>
-                                  <div className="w-1 h-1 bg-blue-400/40 rounded-full ml-0.5"></div>
-                                </div>
-
-                                <div className="flex flex-col space-y-3 relative z-10">
-                                  <div className="flex flex-col items-start">
-                                    <span className="font-semibold text-blue-100">
-                                      Add to Existing Playlist
-                                    </span>
-                                    <span className="text-xs text-blue-300/80 mt-0.5">
-                                      Select songs to add to your playlists
-                                    </span>
+                                  {/* Spotify icon placeholder */}
+                                  <div className="absolute top-2 right-2 w-6 h-6 bg-green-400/20 rounded-full flex items-center justify-center">
+                                    <div className="w-3 h-3 bg-green-400/40 rounded-full"></div>
                                   </div>
 
-                                  <Select>
-                                    <SelectTrigger className="w-full bg-blue-600/20 border-blue-500/40 text-blue-200 text-xs h-8">
-                                      <SelectValue placeholder="Choose playlist..." />
-                                    </SelectTrigger>
-                                    <SelectContent className="bg-stone-800 border-blue-500/40">
-                                      <SelectItem value="liked">
-                                        Liked Songs
-                                      </SelectItem>
-                                      <SelectItem value="chill">
-                                        Chill Vibes
-                                      </SelectItem>
-                                      <SelectItem value="workout">
-                                        Workout Mix
-                                      </SelectItem>
-                                      <SelectItem value="road-trip">
-                                        Road Trip Hits
-                                      </SelectItem>
-                                      <SelectItem value="focus">
-                                        Focus Music
-                                      </SelectItem>
-                                    </SelectContent>
-                                  </Select>
+                                  <div className="flex flex-col items-start relative z-10">
+                                    <span className="font-semibold text-green-100">
+                                      Create New Playlist
+                                    </span>
+                                    <span className="text-xs text-green-300/80 mt-0.5">
+                                      Generate a fresh playlist with all
+                                      suggestions
+                                    </span>
+                                  </div>
+                                </Button>
+                              </div>
+
+                              {/* Add to Existing Playlist */}
+                              <div className="relative group">
+                                <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 to-blue-600/5 rounded-lg blur-sm opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                                <div className="relative w-full bg-blue-600/15 hover:bg-blue-600/25 border border-blue-500/30 rounded-lg backdrop-blur-sm overflow-hidden p-4">
+                                  {/* Background decoration */}
+                                  <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-bl from-blue-400/10 to-transparent rounded-full -translate-y-4 translate-x-4"></div>
+                                  <div className="absolute bottom-0 left-0 w-12 h-12 bg-gradient-to-tr from-blue-500/10 to-transparent rounded-full translate-y-2 -translate-x-2"></div>
+
+                                  {/* Playlist icon placeholder */}
+                                  <div className="absolute top-2 right-2 w-6 h-6 bg-blue-400/20 rounded-full flex items-center justify-center">
+                                    <div className="w-2 h-2 bg-blue-400/40 rounded-sm"></div>
+                                    <div className="w-1 h-1 bg-blue-400/40 rounded-full ml-0.5"></div>
+                                  </div>
+
+                                  <div className="flex flex-col space-y-3 relative z-10">
+                                    <div className="flex flex-col items-start">
+                                      <span className="font-semibold text-blue-100">
+                                        Add to Existing Playlist
+                                      </span>
+                                      <span className="text-xs text-blue-300/80 mt-0.5">
+                                        Select songs to add to your playlists
+                                      </span>
+                                    </div>
+
+                                    <Select
+                                      onValueChange={
+                                        handleAddToExistingPlaylist
+                                      }
+                                    >
+                                      <SelectTrigger className="w-full bg-blue-600/20 border-blue-500/40 text-blue-200 text-xs h-8">
+                                        <SelectValue placeholder="Choose playlist..." />
+                                      </SelectTrigger>
+                                      <SelectContent className="bg-stone-800 border-blue-500/40">
+                                        {Array.isArray(userPlaylists) &&
+                                        userPlaylists.length > 0 ? (
+                                          userPlaylists.map((playlist, idx) => (
+                                            <SelectItem
+                                              key={`${
+                                                playlist.id ?? "playlist"
+                                              }-${idx}`}
+                                              value={
+                                                playlist.id ?? `playlist-${idx}`
+                                              }
+                                            >
+                                              {playlist.name ??
+                                                `Playlist ${idx + 1}`}
+                                            </SelectItem>
+                                          ))
+                                        ) : (
+                                          <SelectItem
+                                            key="no-playlists"
+                                            value="no-playlists"
+                                            disabled
+                                          >
+                                            {/* MODIFIED: guard .length access so we don't read .length on non-array */}
+                                            {Array.isArray(userPlaylists) &&
+                                            userPlaylists.length === 0
+                                              ? "No playlists found"
+                                              : "Loading playlists..."}
+                                          </SelectItem>
+                                        )}
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
                                 </div>
                               </div>
-                            </div>
 
-                            {/* Save Individual Songs */}
-                            <div className="relative group">
-                              <div className="absolute inset-0 bg-gradient-to-br from-purple-500/10 to-purple-600/5 rounded-lg blur-sm opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-                              <Button
-                                className="relative w-full text-left justify-start bg-purple-600/15 hover:bg-purple-600/25 border border-purple-500/30 text-purple-200 text-sm h-auto py-4 px-4 rounded-lg backdrop-blur-sm overflow-hidden"
-                                onClick={() => {
-                                  console.log("Save individual songs clicked");
-                                }}
-                              >
-                                {/* Background decoration */}
-                                <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-bl from-purple-400/10 to-transparent rounded-full -translate-y-4 translate-x-4"></div>
-                                <div className="absolute bottom-0 left-0 w-12 h-12 bg-gradient-to-tr from-purple-500/10 to-transparent rounded-full translate-y-2 -translate-x-2"></div>
+                              {/* Save Individual Songs */}
+                              <div className="relative group">
+                                <div className="absolute inset-0 bg-gradient-to-br from-purple-500/10 to-purple-600/5 rounded-lg blur-sm opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                                <Button
+                                  className="relative w-full text-left justify-start bg-purple-600/15 hover:bg-purple-600/25 border border-purple-500/30 text-purple-200 text-sm h-auto py-4 px-4 rounded-lg backdrop-blur-sm overflow-hidden"
+                                  onClick={() => {
+                                    console.log(
+                                      "Save individual songs clicked"
+                                    );
+                                  }}
+                                >
+                                  {/* Background decoration */}
+                                  <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-bl from-purple-400/10 to-transparent rounded-full -translate-y-4 translate-x-4"></div>
+                                  <div className="absolute bottom-0 left-0 w-12 h-12 bg-gradient-to-tr from-purple-500/10 to-transparent rounded-full translate-y-2 -translate-x-2"></div>
 
-                                {/* Heart icon placeholder */}
-                                <div className="absolute top-2 right-2 w-6 h-6 bg-purple-400/20 rounded-full flex items-center justify-center">
-                                  <div className="w-3 h-3 bg-purple-400/40 rounded-full relative">
-                                    <div className="absolute top-0 left-1 w-1 h-1 bg-purple-400/60 rounded-full"></div>
+                                  {/* Heart icon placeholder */}
+                                  <div className="absolute top-2 right-2 w-6 h-6 bg-purple-400/20 rounded-full flex items-center justify-center">
+                                    <div className="w-3 h-3 bg-purple-400/40 rounded-full relative">
+                                      <div className="absolute top-0 left-1 w-1 h-1 bg-purple-400/60 rounded-full"></div>
+                                    </div>
                                   </div>
-                                </div>
 
-                                <div className="flex flex-col items-start relative z-10">
-                                  <span className="font-semibold text-purple-100">
-                                    Individual Songs
-                                  </span>
-                                  <span className="text-xs text-purple-300/80 mt-0.5">
-                                    Add selected tracks to your library
-                                  </span>
-                                </div>
-                              </Button>
-                            </div>
+                                  <div className="flex flex-col items-start relative z-10">
+                                    <span className="font-semibold text-purple-100">
+                                      Individual Songs
+                                    </span>
+                                    <span className="text-xs text-purple-300/80 mt-0.5">
+                                      Add selected tracks to your library
+                                    </span>
+                                  </div>
+                                </Button>
+                              </div>
 
-                            {/* Preview Songs */}
-                            <div className="relative group">
-                              <div className="absolute inset-0 bg-gradient-to-br from-orange-500/10 to-orange-600/5 rounded-lg blur-sm opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-                              <Button
-                                className="relative w-full text-left justify-start bg-orange-600/15 hover:bg-orange-600/25 border border-orange-500/30 text-orange-200 text-sm h-auto py-4 px-4 rounded-lg backdrop-blur-sm overflow-hidden"
-                                onClick={() => {
-                                  console.log("Preview songs clicked");
-                                }}
-                              >
-                                {/* Background decoration */}
-                                <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-bl from-orange-400/10 to-transparent rounded-full -translate-y-4 translate-x-4"></div>
-                                <div className="absolute bottom-0 left-0 w-12 h-12 bg-gradient-to-tr from-orange-500/10 to-transparent rounded-full translate-y-2 -translate-x-2"></div>
+                              {/* Preview Songs */}
+                              <div className="relative group">
+                                <div className="absolute inset-0 bg-gradient-to-br from-orange-500/10 to-orange-600/5 rounded-lg blur-sm opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                                <Button
+                                  className="relative w-full text-left justify-start bg-orange-600/15 hover:bg-orange-600/25 border border-orange-500/30 text-orange-200 text-sm h-auto py-4 px-4 rounded-lg backdrop-blur-sm overflow-hidden"
+                                  onClick={() => {
+                                    console.log("Preview songs clicked");
+                                  }}
+                                >
+                                  {/* Background decoration */}
+                                  <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-bl from-orange-400/10 to-transparent rounded-full -translate-y-4 translate-x-4"></div>
+                                  <div className="absolute bottom-0 left-0 w-12 h-12 bg-gradient-to-tr from-orange-500/10 to-transparent rounded-full translate-y-2 -translate-x-2"></div>
 
-                                {/* Play icon placeholder */}
-                                <div className="absolute top-2 right-2 w-6 h-6 bg-orange-400/20 rounded-full flex items-center justify-center">
-                                  <div className="w-0 h-0 border-l-[4px] border-l-orange-400/60 border-y-[2px] border-y-transparent ml-0.5"></div>
-                                </div>
+                                  {/* Play icon placeholder */}
+                                  <div className="absolute top-2 right-2 w-6 h-6 bg-orange-400/20 rounded-full flex items-center justify-center">
+                                    <div className="w-0 h-0 border-l-[4px] border-l-orange-400/60 border-y-[2px] border-y-transparent ml-0.5"></div>
+                                  </div>
 
-                                <div className="flex flex-col items-start relative z-10">
-                                  <span className="font-semibold text-orange-100">
-                                    Preview Songs
-                                  </span>
-                                  <span className="text-xs text-orange-300/80 mt-0.5">
-                                    Listen to 30-second previews
-                                  </span>
-                                </div>
-                              </Button>
+                                  <div className="flex flex-col items-start relative z-10">
+                                    <span className="font-semibold text-orange-100">
+                                      Preview Songs
+                                    </span>
+                                    <span className="text-xs text-orange-300/80 mt-0.5">
+                                      Listen to 30-second previews
+                                    </span>
+                                  </div>
+                                </Button>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      )}
+                        )}
 
-                      {/* CHANGE: Added message when functions aren't visible yet */}
-                      {!showSpotifyFunctions && user && (
-                        <p className="text-stone-400 text-xs">
-                          Functions will appear after you send a message
-                        </p>
-                      )}
+                        {/* CHANGE: Added message when functions aren't visible yet */}
+                        {!showSpotifyFunctions && user && (
+                          <p className="text-stone-400 text-xs">
+                            Functions will appear after you send a message
+                          </p>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-        )}
-        {!shouldRenderSpotifyPage && (
-          <AnimatePresence>
-            <motion.div
-              key="arrow"
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              transition={{ duration: 0.2 }}
-              className="absolute left-1 top-1/2 z-50"
-            >
-              <ArrowRightFromLine
-                className="text-stone-100/60 cursor-pointer"
-                onClick={() => setShowSpotifyPage(true)} // changes sidebar visibility to true --> in turn MOUNTS it via useeffect
-              />
-            </motion.div>
-          </AnimatePresence>
-        )}
-
-        <div className="relative w-full h-full border-b">
-          <div
-            className="absolute top-2 left-1/2 transform -translate-x-1/2 z-50 w-[97.5%] bg-gradient-to-tr from-gray-600/45 to-gray-600/30 backdrop-blur-md rounded-lg drop-shadow-2xl border border-white/10 
-                          before:absolute before:inset-0 before:bg-gradient-to-t before:from-white/20 before:to-transparent before:rounded-lg before:pointer-events-none"
-          >
-            <div className="flex justify-between items-center mx-2 p-1">
-              <Button
-                onClick={clearMessages}
-                className=" p-2 bg-blue-600/20 hover:bg-blue-600/40 border border-blue-500/50 text-blue-400"
-                title="Reload chat (Ctrl+Shift+D / Cmd+Shift+D)"
-                disabled={!user}
-              >
-                <RotateCcw className="w-4 h-4" />
-              </Button>
-
-              <h1 className="text-xl font-bold bg-gradient-to-r from-green-400 via-green-500 to-green-300 bg-clip-text text-transparent drop-shadow-lg animate-pulse">
-                Vibe.ai
-              </h1>
-
-              <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
-                <PopoverTrigger asChild>
-                  <Button className="p-5 text-lg border-1 border-green1/70 text-green1 cursor-pointer bg-green2/5">
-                    {user ? (
-                      <Avatar>
-                        <AvatarImage src={pfp} />
-                        <AvatarFallback>profile</AvatarFallback>
-                      </Avatar>
-                    ) : (
-                      <Avatar>
-                        <AvatarImage src="/404profile.png" />
-                        <AvatarFallback>404profile</AvatarFallback>
-                      </Avatar>
-                    )}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="bg-stone-900/90 text-stone-100 border-1 border-green1/70">
-                  <div className="grid gap-7">
-                    <div className="space-y-2">
-                      <h4 className="font-medium leading-none flex items-center justify-center w-full">
-                        {!user
-                          ? "Connect Spotify to Vibe.ai"
-                          : "Disconnect Spotify to Vibe.ai"}
-                      </h4>
-                    </div>
-
-                    <div className="flex items-center justify-center w-full my-5">
-                      <Button
-                        onClick={() => {
-                          if (!user) {
-                            signInWithSpotify();
-                          } else {
-                            signOut();
-                            setUsername("");
-                            setPfp("/404profile.png");
-                            setMessages([]);
-                            setShowWelcomeInfo(true);
-                            setShowSpotifyFunctions(false);
-                            setPopoverOpen(false);
-                            setShowAlert(true);
-                          }
-                        }}
-                        className="p-3 rounded-lg bg-stone-700/50"
-                      >
-                        {!user ? "configure" : "unconfigure"}
-                      </Button>
-                    </div>
-                  </div>
-                </PopoverContent>
-              </Popover>
-            </div>
-          </div>
-
-          <SpotifyReauthNotification />
-
-          <div
-            className="absolute inset-0 overflow-y-auto p-4 pt-16 pb-28"
-            ref={ref}
-          >
-            {/* Welcome Info Component */}
-            <AnimatePresence>
-              {showWelcomeInfo && messages.length === 0 && (
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.95 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.95 }}
-                  transition={{ duration: 0.3 }}
-                  className="flex items-center justify-center min-h-[50vh]"
-                >
-                  <div className="bg-gradient-to-br from-stone-700/40 to-stone-800/40 backdrop-blur-sm border border-stone-600/30 rounded-xl p-8 max-w-md text-center">
-                    <div className="flex justify-center mb-4">
-                      {user ? (
-                        <Sparkles className="w-12 h-12 text-green-400 animate-pulse" />
-                      ) : (
-                        <LogIn className="w-12 h-12 text-orange-400 animate-pulse" />
-                      )}
-                    </div>
-                    <h3 className="text-xl font-semibold text-stone-100 mb-3">
-                      {user ? "Welcome to Vibe.ai" : "Sign In Required"}
-                    </h3>
-                    <p className="text-stone-300 mb-4 leading-relaxed">
-                      {user
-                        ? "I'm here to help you create the perfect playlists for any mood or occasion. Start typing a message below to begin our conversation!"
-                        : "Please connect your Spotify account to use Vibe.ai's playlist creation features. Click the profile button in the top right to sign in."}
-                    </p>
-                    {!user && (
-                      <Button
-                        onClick={signInWithSpotify}
-                        className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg flex items-center gap-2 mx-auto"
-                      >
-                        <LogIn className="w-4 h-4" />
-                        Sign in with Spotify
-                      </Button>
-                    )}
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-
-            {/* Messages */}
-            <div className="flex flex-col gap-3">
-              {messages.map((msg, index) => (
-                <div
-                  key={index}
-                  className={`flex items-end gap-3 ${
-                    msg.sender === "user" ? "justify-end" : "justify-start"
-                  }`}
-                >
-                  <div
-                    className={`flex-shrink-0 ${
-                      msg.sender === "user" ? "" : ""
-                    }`}
-                  >
-                    {msg.sender === "user" ? (
-                      <Avatar className="w-8 h-8">
-                        <AvatarImage src={pfp} />
-                        <AvatarFallback>profile</AvatarFallback>
-                      </Avatar>
-                    ) : (
-                      <Avatar className="w-8 h-8">
-                        <AvatarImage src="/vibe.png" />
-                        <AvatarFallback>bot</AvatarFallback>
-                      </Avatar>
-                    )}
-                  </div>
-
-                  <div className="flex items-end gap-2 group">
-                    <div
-                      className={`p-3 rounded-lg max-w-xl break-words whitespace-pre-wrap ${
-                        msg.sender === "user"
-                          ? "bg-green-600 text-white"
-                          : "bg-gray-300 text-gray-800"
-                      }`}
-                    >
-                      {parseBoldText(msg.text)}
-                    </div>
-
-                    <button
-                      onClick={() => copyToClipboard(msg.text, index)}
-                      className={`opacity-0 group-hover:opacity-100 transition-opacity delay-200 duration-500 p-2 rounded-md hover:bg-gray-200 ${
-                        msg.sender === "user" ? "order-0" : ""
-                      }`}
-                      title="Copy message"
-                    >
-                      {copiedIndex === index ? (
-                        <Check className="w-4 h-4 text-green-600" />
-                      ) : (
-                        <Copy className="w-4 h-4 text-gray-500" />
-                      )}
-                    </button>
-                  </div>
-                </div>
-              ))}
-              <AnimatePresence>
-                {isBotTalking && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -10 }}
-                    transition={{ duration: 0.2 }}
-                  >
-                    <TypingIndicator />
                   </motion.div>
                 )}
               </AnimatePresence>
             </div>
-          </div>
-          <div className="w-full h-full flex items-end justify-center pb-5 text-white">
-            <div className="flex-1 flex flex-col">
-              <div className="w-full flex items-center justify-center gap-1 z-50">
-                <Input
-                  onChange={(e) => setInput(e.target.value)}
-                  className={`w-[60%] ${
-                    user && !isBotTalking
-                      ? "bg-stone-700/75"
-                      : "bg-stone-700/50 text-stone-500 cursor-not-allowed"
-                  }`}
-                  placeholder={
-                    isBotTalking
-                      ? "Vibe is responding..."
-                      : getInputPlaceholder()
-                  }
-                  value={input}
-                  disabled={!user || isBotTalking}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && user && !isBotTalking) {
-                      e.preventDefault();
-                      handleMessageSend();
-                    }
-                  }}
+          )}
+          {!shouldRenderSpotifyPage && (
+            <AnimatePresence>
+              <motion.div
+                key="arrow"
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                transition={{ duration: 0.2 }}
+                className="absolute left-1 top-1/2 z-50"
+              >
+                <ArrowRightFromLine
+                  className="text-stone-100/60 cursor-pointer"
+                  onClick={() => setShowSpotifyPage(true)} // changes sidebar visibility to true --> in turn MOUNTS it via useeffect
                 />
-                <button
-                  onClick={handleMessageSend}
-                  disabled={!user || isBotTalking}
-                  className={
-                    user && isBotTalking ? "" : "opacity-50 cursor-not-allowed"
-                  }
-                >
-                  {isBotTalking ? (
-                    <div className="w-5 h-5 border-2 border-stone-500 border-t-green-400 rounded-full animate-spin"></div>
-                  ) : (
-                    <SendHorizontal className="cursor-pointer" />
+              </motion.div>
+            </AnimatePresence>
+          )}
+
+          <div className="relative w-full h-full border-b">
+            <TopNav
+              user={user}
+              pfp={pfp}
+              popoverOpen={popoverOpen}
+              setPopoverOpen={setPopoverOpen}
+              onClearMessages={clearMessages}
+              onSignIn={() => signInWithSpotify}
+              onSignOut={() => {
+                signOut();
+                setUsername("");
+                setPfp("/404profile.png");
+                setMessages([]);
+                setShowWelcomeInfo(true);
+                setShowSpotifyFunctions(false);
+                setPopoverOpen(false);
+                setShowAlert(true);
+              }}
+            />
+
+            <SpotifyReauthNotification
+              needsSpotifyReauth={needsSpotifyReauth}
+              user={user}
+              onReauth={handleSpotifyReauth}
+            />
+
+            <div
+              className="absolute inset-0 overflow-y-auto p-4 pt-16 pb-28"
+              ref={ref}
+            >
+              <WelcomeScreen
+                showWelcomeInfo={showWelcomeInfo}
+                messagesLength={messages.length}
+                user={user}
+                onSignIn={signInWithSpotify}
+              />
+
+              {/* Messages */}
+              <div className="flex flex-col gap-3">
+                {messages.map((msg, index) => (
+                  <div
+                    key={index}
+                    className={`flex items-end gap-3 ${
+                      msg.sender === "user" ? "justify-end" : "justify-start"
+                    }`}
+                  >
+                    <ChatMessage message={msg} index={index} pfp={pfp} copiedIndex={copiedIndex} onCopy={copyToClipboard}/>
+                  </div>
+                ))}
+                <AnimatePresence>
+                  {isBotTalking && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      transition={{ duration: 0.2 }}
+                    >
+                      <TypingIndicator />
+                    </motion.div>
                   )}
-                </button>
+                </AnimatePresence>
               </div>
             </div>
-
-            <AnimatePresence
-              initial={false}
-              onExitComplete={() => {
-                // fixing the visibility issue (before fade out ends on alert component)
-                setShowAlert(false);
-                sessionStorage.setItem("redirectedAfterLogin", "false");
-              }}
-            >
-              {showAlert && (
-                <>
-                  <AlertFlash
-                    message={
-                      sessionStorage.getItem("redirectedAfterLogin") == "true"
-                        ? "IN"
-                        : user
-                        ? "STATE"
-                        : "OUT"
+            <div className="w-full h-full flex items-end justify-center pb-5 text-white">
+              <div className="flex-1 flex flex-col">
+                <div className="w-full flex items-center justify-center gap-1 z-50">
+                  <Input
+                    onChange={(e) => setInput(e.target.value)}
+                    className={`w-[60%] ${
+                      user && !isBotTalking
+                        ? "bg-stone-700/75"
+                        : "bg-stone-700/50 text-stone-500 cursor-not-allowed"
+                    }`}
+                    placeholder={
+                      isBotTalking
+                        ? "Vibe is responding..."
+                        : getInputPlaceholder()
                     }
-                    onClose={() => setShowAlert(false)}
+                    value={input}
+                    disabled={!user || isBotTalking}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && user && !isBotTalking) {
+                        e.preventDefault();
+                        handleMessageSend();
+                      }
+                    }}
                   />
-                </>
-              )}
-            </AnimatePresence>
+                  <button
+                    onClick={handleMessageSend}
+                    disabled={!user || isBotTalking}
+                    className={
+                      user && isBotTalking
+                        ? ""
+                        : "opacity-50 cursor-not-allowed"
+                    }
+                  >
+                    {isBotTalking ? (
+                      <div className="w-5 h-5 border-2 border-stone-500 border-t-green-400 rounded-full animate-spin"></div>
+                    ) : (
+                      <SendHorizontal className="cursor-pointer" />
+                    )}
+                  </button>
+                </div>
+              </div>
 
-            <Button className="absolute right-0 bottom-0 p-1 m-3 px-5 text-md border-1 border-green1/70 text-green1 cursor-pointer bg-green2/5 z-50">
-              help <MessageCircleQuestion />
-            </Button>
+              <AnimatePresence
+                initial={false}
+                onExitComplete={() => {
+                  // fixing the visibility issue (before fade out ends on alert component)
+                  setShowAlert(false);
+                  sessionStorage.setItem("redirectedAfterLogin", "false");
+                }}
+              >
+                {showAlert && (
+                  <>
+                    <AlertFlash
+                      message={
+                        sessionStorage.getItem("redirectedAfterLogin") == "true"
+                          ? "IN"
+                          : user
+                          ? "STATE"
+                          : "OUT"
+                      }
+                      onClose={() => setShowAlert(false)}
+                    />
+                  </>
+                )}
+              </AnimatePresence>
+
+              <Button className="absolute right-0 bottom-0 p-1 m-3 px-5 text-md border-1 border-green1/70 text-green1 cursor-pointer bg-green2/5 z-50">
+                help <MessageCircleQuestion />
+              </Button>
+            </div>
           </div>
         </div>
       </div>
-    </div>
+
+      <CreatePlaylistModal
+        show={showCreatePlaylistModal}
+        onClose={setShowCreatePlaylistModal}
+        newPlaylistName={newPlaylistName}
+        setNewPlaylistName={setNewPlaylistName}
+        newPlaylistDescription={newPlaylistDescription}
+        setNewPlaylistDescription={setNewPlaylistDescription}
+        isCreating={isCreatingPlaylist}
+        onCreatePlaylist={handleCreateNewPlaylist}
+      />
+    </>
   );
 };
 
